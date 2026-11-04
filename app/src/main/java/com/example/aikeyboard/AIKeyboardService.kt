@@ -50,6 +50,9 @@ class AIKeyboardService : InputMethodService() {
         btnMic = view.findViewById(R.id.btnMic)
         keysContainer = view.findViewById(R.id.keyboardKeysLayout)
 
+        workingModel = getSharedPreferences("ai_kb_prefs", Context.MODE_PRIVATE)
+            .getString("cached_model", null)
+
         btnMic.setOnClickListener {
             if (!isRecording) startRecording() else stopRecordingAndSend("العربية")
         }
@@ -94,7 +97,6 @@ class AIKeyboardService : InputMethodService() {
             "AR" -> listOf(
                 listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
                 listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
-                // زر المسح في أقصى اليمين مثل الإنكليزي والتركي
                 listOf("ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "DEL"),
                 listOf("123", "🌐 TR", "SPACE", "،", "↵")
             )
@@ -198,7 +200,7 @@ class AIKeyboardService : InputMethodService() {
                         }
                     )
 
-                    // دعم الحذف المستمر السريع عند الضغط المطول
+                    // الحذف المستمر السريع عند الضغط المطول
                     if (key == "DEL") {
                         val deleteRunnable = object : Runnable {
                             override fun run() {
@@ -234,12 +236,8 @@ class AIKeyboardService : InputMethodService() {
     private fun handleKeyPress(key: String) {
         val ic = currentInputConnection ?: return
         when (key) {
-            "SPACE" -> {
-                ic.commitText(" ", 1)
-            }
-            "↵" -> {
-                ic.commitText("\n", 1)
-            }
+            "SPACE" -> ic.commitText(" ", 1)
+            "↵" -> ic.commitText("\n", 1)
             "123" -> {
                 currentLayout = "SYM"
                 renderKeyboardLayout()
@@ -367,6 +365,7 @@ class AIKeyboardService : InputMethodService() {
         sendGeminiRequest(parts)
     }
 
+    // المحرك الديناميكي: يكتشف تلقائياً النموذج المتاح لحسابك ويتصل به فوراً
     private fun sendGeminiRequest(parts: JSONArray) {
         val apiKey = getApiKey()
         if (apiKey.isBlank()) {
@@ -376,75 +375,132 @@ class AIKeyboardService : InputMethodService() {
 
         Thread {
             try {
-                // قائمة النماذج المعتمدة بالترتيب للتجربة التلقائية
-                val modelsToTry = if (workingModel != null) {
-                    listOf(workingModel!!)
-                } else {
-                    listOf("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b")
+                // 1. تجربة النموذج المحفوظ مسبقاً إذا كان يعمل
+                if (workingModel != null) {
+                    val (ok, _) = executeGenerateContent(workingModel!!, parts, apiKey)
+                    if (ok) return@Thread
                 }
 
-                var success = false
-                var lastErrorMessage = ""
+                // 2. إذا لم يكن محفوظاً أو تعطل، يتم جلب قائمة النماذج الحية الخاصة بحسابك
+                mainHandler.post { tvStatus.text = "⏳ جاري اختيار النموذج الأنسب..." }
 
-                for (model in modelsToTry) {
-                    try {
-                        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey")
-                        val conn = url.openConnection() as HttpURLConnection
-                        conn.requestMethod = "POST"
-                        conn.setRequestProperty("Content-Type", "application/json")
-                        conn.setRequestProperty("x-goog-api-key", apiKey)
-                        conn.connectTimeout = 12000
-                        conn.readTimeout = 25000
-                        conn.doOutput = true
+                val modelsUrl = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+                val getConn = modelsUrl.openConnection() as HttpURLConnection
+                getConn.requestMethod = "GET"
+                getConn.setRequestProperty("x-goog-api-key", apiKey)
+                getConn.connectTimeout = 10000
+                getConn.readTimeout = 10000
 
-                        val content = JSONObject().put("parts", parts)
-                        val payload = JSONObject().put("contents", JSONArray().put(content))
+                if (getConn.responseCode !in 200..299) {
+                    val err = getConn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    val msg = try { JSONObject(err).getJSONObject("error").getString("message") } catch (e: Exception) { "خطأ في المفتاح: ${getConn.responseCode}" }
+                    mainHandler.post { tvStatus.text = "❌ $msg" }
+                    return@Thread
+                }
 
-                        conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+                val resp = getConn.inputStream.bufferedReader().use { it.readText() }
+                val modelsArr = JSONObject(resp).optJSONArray("models")
 
-                        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-                        val responseStr = stream.bufferedReader().use { it.readText() }
+                if (modelsArr == null || modelsArr.length() == 0) {
+                    mainHandler.post { tvStatus.text = "❌ لم يتم العثور على نماذج متاحة لحسابك" }
+                    return@Thread
+                }
 
-                        if (conn.responseCode in 200..299) {
-                            val jsonResponse = JSONObject(responseStr)
-                            val resultText = jsonResponse
-                                .getJSONArray("candidates")
-                                .getJSONObject(0)
-                                .getJSONObject("content")
-                                .getJSONArray("parts")
-                                .getJSONObject(0)
-                                .getString("text")
-
-                            workingModel = model
-                            success = true
-
-                            mainHandler.post {
-                                replaceAllText(resultText)
-                                tvStatus.text = "✅ تم التحديث بنجاح!"
-                            }
-                            break
-                        } else {
-                            lastErrorMessage = try {
-                                JSONObject(responseStr).getJSONObject("error").getString("message")
-                            } catch (e: Exception) {
-                                "كود ${conn.responseCode}"
+                val candidates = mutableListOf<String>()
+                for (i in 0 until modelsArr.length()) {
+                    val m = modelsArr.getJSONObject(i)
+                    val mName = m.getString("name") // e.g. "models/gemini-..."
+                    val methods = m.optJSONArray("supportedGenerationMethods")
+                    var canGenerate = false
+                    if (methods != null) {
+                        for (j in 0 until methods.length()) {
+                            if (methods.getString(j) == "generateContent") {
+                                canGenerate = true
+                                break
                             }
                         }
-                    } catch (e: Exception) {
-                        lastErrorMessage = e.message ?: "خطأ في الاتصال"
+                    }
+                    if (canGenerate) {
+                        // إعطاء أولوية للنماذج السريعة
+                        if (mName.contains("flash", ignoreCase = true)) {
+                            candidates.add(0, mName)
+                        } else {
+                            candidates.add(mName)
+                        }
+                    }
+                }
+
+                // 3. تجربة النماذج المتاحة فعلياً بالترتيب
+                var success = false
+                var lastErr = ""
+                for (modelPath in candidates) {
+                    val (ok, err) = executeGenerateContent(modelPath, parts, apiKey)
+                    if (ok) {
+                        workingModel = modelPath
+                        getSharedPreferences("ai_kb_prefs", Context.MODE_PRIVATE)
+                            .edit().putString("cached_model", modelPath).apply()
+                        success = true
+                        break
+                    } else {
+                        lastErr = err
                     }
                 }
 
                 if (!success) {
-                    mainHandler.post {
-                        tvStatus.text = "❌ $lastErrorMessage"
-                    }
+                    mainHandler.post { tvStatus.text = "❌ $lastErr" }
                 }
+
             } catch (e: Exception) {
-                mainHandler.post {
-                    tvStatus.text = "❌ خطأ في الاتصال بالإنترنت"
-                }
+                mainHandler.post { tvStatus.text = "❌ خطأ في الاتصال بالإنترنت" }
             }
         }.start()
+    }
+
+    private fun executeGenerateContent(modelPath: String, parts: JSONArray, apiKey: String): Pair<Boolean, String> {
+        return try {
+            val cleanPath = if (modelPath.startsWith("models/")) modelPath else "models/$modelPath"
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/$cleanPath:generateContent?key=$apiKey")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("x-goog-api-key", apiKey)
+            conn.connectTimeout = 12000
+            conn.readTimeout = 25000
+            conn.doOutput = true
+
+            val content = JSONObject().put("parts", parts)
+            val payload = JSONObject().put("contents", JSONArray().put(content))
+
+            conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val responseStr = stream.bufferedReader().use { it.readText() }
+
+            if (conn.responseCode in 200..299) {
+                val jsonResponse = JSONObject(responseStr)
+                val resultText = jsonResponse
+                    .getJSONArray("candidates")
+                    .getJSONObject(0)
+                    .getJSONObject("content")
+                    .getJSONArray("parts")
+                    .getJSONObject(0)
+                    .getString("text")
+
+                mainHandler.post {
+                    replaceAllText(resultText)
+                    tvStatus.text = "✅ تم التحديث بنجاح!"
+                }
+                Pair(true, "")
+            } else {
+                val errorDetail = try {
+                    JSONObject(responseStr).getJSONObject("error").getString("message")
+                } catch (e: Exception) {
+                    "كود ${conn.responseCode}"
+                }
+                Pair(false, errorDetail)
+            }
+        } catch (e: Exception) {
+            Pair(false, e.message ?: "خطأ في الشبكة")
+        }
     }
 }
