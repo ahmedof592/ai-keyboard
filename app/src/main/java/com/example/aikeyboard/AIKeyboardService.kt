@@ -349,7 +349,8 @@ class AIKeyboardService : InputMethodService() {
         }
         Thread {
             try {
-                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+                // إرسال الطلب مع المفتاح في الرابط وفي الترويسة معاً لضمان القبول الكامل
+                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -381,8 +382,13 @@ class AIKeyboardService : InputMethodService() {
                         tvStatus.text = "✅ تم التحديث بنجاح!"
                     }
                 } else {
+                    val errorDetail = try {
+                        JSONObject(responseStr).getJSONObject("error").getString("message")
+                    } catch (e: Exception) {
+                        "كود ${conn.responseCode}"
+                    }
                     mainHandler.post {
-                        tvStatus.text = "❌ رفض الخادم (كود ${conn.responseCode})"
+                        tvStatus.text = "❌ $errorDetail"
                     }
                 }
             } catch (e: Exception) {
