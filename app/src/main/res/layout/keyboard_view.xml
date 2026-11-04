@@ -3,27 +3,27 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="#181825"
+    android:background="#11111B"
     android:paddingStart="2dp"
     android:paddingEnd="2dp"
     android:paddingTop="3dp"
     android:paddingBottom="4dp">
 
-    <!-- شريط الحالة العريض لتوضيح المود بوضوح تام -->
+    <!-- 1. شريط الحالة العلوي: يوضح المود الفعال واللغة والنمط بشكل صريح -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="جاهز.. اختر المود للتحدث أو اكتب بالحروف ✨"
-        android:textColor="#BAC2DE"
-        android:textSize="11.5sp"
+        android:text="🟢 المود: تحسين الصياغة (نفس اللغة) | النمط: رسمي 👔"
+        android:textColor="#CDD6F4"
+        android:textSize="11sp"
         android:textStyle="bold"
         android:gravity="center"
         android:paddingTop="1dp"
         android:paddingBottom="3dp"
         android:singleLine="true" />
 
-    <!-- شريط الأوضاع المستقلة (ارتفاع مدمج 34dp) -->
+    <!-- 2. شريط التحكم الرئيسي: اختيار المود + المايكروفون + تنفيذ عالنص -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="34dp"
@@ -31,15 +31,41 @@
         android:gravity="center_vertical"
         android:paddingBottom="2dp">
 
-        <!-- مود الصياغة الصوتية (نفس اللغة) -->
+        <!-- زر تفعيل مود التحسين (نفس اللغة) -->
         <Button
-            android:id="@+id/btnMicRefine"
+            android:id="@+id/btnModeRefine"
             android:layout_width="0dp"
-            android:layout_height="33dp"
-            android:layout_weight="1.3"
-            android:backgroundTint="#F38BA8"
-            android:text="🎤✨ صياغة"
-            android:textColor="#11111B"
+            android:layout_height="32dp"
+            android:layout_weight="1.25"
+            android:text="✨ مود التحسين"
+            android:textSize="10.5sp"
+            android:textStyle="bold"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:padding="0dp"
+            android:layout_margin="1dp" />
+
+        <!-- زر تفعيل مود الترجمة -->
+        <Button
+            android:id="@+id/btnModeTranslate"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_weight="1.25"
+            android:text="🌐 مود الترجمة"
+            android:textSize="10.5sp"
+            android:textStyle="bold"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:padding="0dp"
+            android:layout_margin="1dp" />
+
+        <!-- زر التسجيل الصوتي الموحد (ينفذ المود الفعال) -->
+        <Button
+            android:id="@+id/btnMicAction"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_weight="1.15"
+            android:text="🎤 تحدث"
             android:textSize="11sp"
             android:textStyle="bold"
             android:insetTop="0dp"
@@ -47,45 +73,13 @@
             android:padding="0dp"
             android:layout_margin="1dp" />
 
-        <!-- مود الترجمة الصوتية إلى التركية -->
+        <!-- زر التنفيذ على النص المكتوب بالحروف -->
         <Button
-            android:id="@+id/btnMicTr"
+            android:id="@+id/btnApplyText"
             android:layout_width="0dp"
-            android:layout_height="33dp"
-            android:layout_weight="1.1"
-            android:backgroundTint="#313244"
-            android:text="🎤🇹🇷 تركي"
-            android:textColor="#FFFFFF"
-            android:textSize="10.5sp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:padding="0dp"
-            android:layout_margin="1dp" />
-
-        <!-- مود الترجمة الصوتية إلى الإنكليزية -->
-        <Button
-            android:id="@+id/btnMicEn"
-            android:layout_width="0dp"
-            android:layout_height="33dp"
-            android:layout_weight="1.1"
-            android:backgroundTint="#313244"
-            android:text="🎤🇬🇧 EN"
-            android:textColor="#FFFFFF"
-            android:textSize="10.5sp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:padding="0dp"
-            android:layout_margin="1dp" />
-
-        <!-- مود صياغة وتصحيح النص المكتوب بالحروف -->
-        <Button
-            android:id="@+id/btnRewriteText"
-            android:layout_width="0dp"
-            android:layout_height="33dp"
-            android:layout_weight="1.2"
-            android:backgroundTint="#A6E3A1"
-            android:text="📝 تحسين"
-            android:textColor="#11111B"
+            android:layout_height="32dp"
+            android:layout_weight="0.95"
+            android:text="⚡ نفّذ"
             android:textSize="11sp"
             android:textStyle="bold"
             android:insetTop="0dp"
@@ -93,15 +87,13 @@
             android:padding="0dp"
             android:layout_margin="1dp" />
 
-        <!-- زر التبديل لكيبورد سامسونج -->
+        <!-- زر تغيير الكيبورد -->
         <Button
             android:id="@+id/btnSwitchKeyboard"
             android:layout_width="0dp"
-            android:layout_height="33dp"
-            android:layout_weight="0.6"
-            android:backgroundTint="#89B4FA"
+            android:layout_height="32dp"
+            android:layout_weight="0.5"
             android:text="⌨️"
-            android:textColor="#11111B"
             android:textSize="12sp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
@@ -109,7 +101,16 @@
             android:layout_margin="1dp" />
     </LinearLayout>
 
-    <!-- حاوية أزرار الحروف الكاملة -->
+    <!-- 3. شريط الخيارات الفرعية الديناميكي (يعرض درجات الصياغة أو لغات الترجمة) -->
+    <LinearLayout
+        android:id="@+id/subOptionsContainer"
+        android:layout_width="match_parent"
+        android:layout_height="31dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="2dp" />
+
+    <!-- 4. حاوية أزرار الكيبورد الكاملة (عربي / تركي / إنكليزي / رموز) -->
     <LinearLayout
         android:id="@+id/keyboardKeysLayout"
         android:layout_width="match_parent"
