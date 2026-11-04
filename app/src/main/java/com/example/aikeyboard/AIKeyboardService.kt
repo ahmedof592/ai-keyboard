@@ -25,17 +25,39 @@ import java.util.Locale
 
 class AIKeyboardService : InputMethodService() {
 
-    private enum class VoiceMode { NONE, REFINE_ONLY, TRANSLATE_TR, TRANSLATE_EN }
+    // المود الرئيسي: إما تحسين الصياغة بنفس اللغة، أو ترجمة للغة محددة
+    private enum class MainMode { REFINE, TRANSLATE }
 
-    private var currentVoiceMode = VoiceMode.NONE
+    // درجات الصياغة الاحترافية
+    private enum class ToneStyle(val label: String, val promptDesc: String) {
+        FORMAL("👔 رسمي", "بأسلوب رسمي، احترافي، رصين، ومتقن جداً"),
+        SEMI_FORMAL("🤝 نصف رسمي", "بأسلوب نصف رسمي، عملي، طبيعي، ومحترم"),
+        POLITE("🌸 ألطف", "بأسلوب لطيف جداً،ودود، لبق، ودافئ"),
+        CONCISE("🎯 مختصر", "بأسلوب مختصر، مباشر، واضح، وخالٍ من الحشو")
+    }
+
+    // لغات الهدف في مود الترجمة
+    private enum class TargetLang(val label: String, val langName: String) {
+        AR("➔ 🇸🇦 عربي", "العربية الفصحى السليمة"),
+        TR("➔ 🇹🇷 تركي", "التركية (Türkçe)"),
+        EN("➔ 🇬🇧 EN", "الإنكليزية (English)")
+    }
+
+    private var currentMainMode = MainMode.REFINE
+    private var currentTone = ToneStyle.FORMAL
+    private var currentTargetLang = TargetLang.TR
+
     private var mediaRecorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var isRecording = false
 
     private lateinit var tvStatus: TextView
-    private lateinit var btnMicRefine: Button
-    private lateinit var btnMicTr: Button
-    private lateinit var btnMicEn: Button
+    private lateinit var btnModeRefine: Button
+    private lateinit var btnModeTranslate: Button
+    private lateinit var btnMicAction: Button
+    private lateinit var btnApplyText: Button
+    private lateinit var btnSwitchKeyboard: Button
+    private lateinit var subOptionsContainer: LinearLayout
     private lateinit var keysContainer: LinearLayout
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -54,72 +76,180 @@ class AIKeyboardService : InputMethodService() {
     override fun onCreateInputView(): View {
         val view = layoutInflater.inflate(R.layout.keyboard_view, null)
         tvStatus = view.findViewById(R.id.tvStatus)
-        btnMicRefine = view.findViewById(R.id.btnMicRefine)
-        btnMicTr = view.findViewById(R.id.btnMicTr)
-        btnMicEn = view.findViewById(R.id.btnMicEn)
+        btnModeRefine = view.findViewById(R.id.btnModeRefine)
+        btnModeTranslate = view.findViewById(R.id.btnModeTranslate)
+        btnMicAction = view.findViewById(R.id.btnMicAction)
+        btnApplyText = view.findViewById(R.id.btnApplyText)
+        btnSwitchKeyboard = view.findViewById(R.id.btnSwitchKeyboard)
+        subOptionsContainer = view.findViewById(R.id.subOptionsContainer)
         keysContainer = view.findViewById(R.id.keyboardKeysLayout)
 
         workingModel = getSharedPreferences("ai_kb_prefs", Context.MODE_PRIVATE)
-            .getString("cached_model", "models/gemini-2.0-flash")
+            .getString("cached_model", null)
 
-        // 1. زر مود الصياغة الصوتية المباشرة (نفس اللغة)
-        btnMicRefine.setOnClickListener {
-            handleVoiceModeClick(VoiceMode.REFINE_ONLY, btnMicRefine, "صياغة وتصحيح ✨")
+        // التبديل إلى مود التحسين (نفس اللغة)
+        btnModeRefine.setOnClickListener {
+            if (isRecording) cancelRecording()
+            currentMainMode = MainMode.REFINE
+            updateTopControlsUI()
         }
 
-        // 2. زر مود الترجمة الصوتية إلى التركية
-        btnMicTr.setOnClickListener {
-            handleVoiceModeClick(VoiceMode.TRANSLATE_TR, btnMicTr, "ترجمة ➔ 🇹🇷 تركي")
+        // التبديل إلى مود الترجمة
+        btnModeTranslate.setOnClickListener {
+            if (isRecording) cancelRecording()
+            currentMainMode = MainMode.TRANSLATE
+            updateTopControlsUI()
         }
 
-        // 3. زر مود الترجمة الصوتية إلى الإنكليزية
-        btnMicEn.setOnClickListener {
-            handleVoiceModeClick(VoiceMode.TRANSLATE_EN, btnMicEn, "ترجمة ➔ 🇬🇧 EN")
+        // زر المايكروفون الذكي (يبدأ التسجيل أو ينهيه وينفذ المود المختار)
+        btnMicAction.setOnClickListener {
+            if (!isRecording) {
+                startAudioCapture()
+            } else {
+                stopRecordingAndProcess()
+            }
         }
 
-        // 4. زر مود تصحيح النص المكتوب يدوياً بالحروف
-        view.findViewById<Button>(R.id.btnRewriteText).setOnClickListener {
-            if (isRecording) stopRecordingAndExecute()
-            val currentText = getCurrentFieldText()
-            if (currentText.isBlank()) {
-                tvStatus.text = "⚠️ اكتب جملة أولاً لتصحيحها بالحروف!"
+        // زر التنفيذ على النص المكتوب حالياً
+        btnApplyText.setOnClickListener {
+            if (isRecording) {
+                stopRecordingAndProcess()
                 return@setOnClickListener
             }
-            tvStatus.text = "⏳ [مود تصحيح المكتوب] جاري تحسين الصياغة..."
-            val prompt = "أعد صياغة النص التالي ليكون بأسلوب رسمي، فصيح، متقن، وخالٍ من الأخطاء الإملائية مع الحفاظ على نفس لغة النص تماماً بدون ترجمة. أرجع النص المصاغ فقط بدون أي إضافات:\n$currentText"
-            callGeminiText(prompt)
+            val currentText = getCurrentFieldText()
+            if (currentText.isBlank()) {
+                tvStatus.text = "⚠️ اكتب نصاً أولاً أو اضغط (🎤 تحدث)!"
+                return@setOnClickListener
+            }
+            executeTextAction(currentText)
         }
 
-        // 5. زر تبديل الكيبورد
-        view.findViewById<Button>(R.id.btnSwitchKeyboard).setOnClickListener {
-            if (isRecording) stopRecordingAndExecute()
+        // زر تغيير لوحة المفاتيح
+        btnSwitchKeyboard.setOnClickListener {
+            if (isRecording) cancelRecording()
             val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showInputMethodPicker()
         }
 
+        updateTopControlsUI()
         renderKeyboardLayout()
         return view
     }
 
-    private fun handleVoiceModeClick(mode: VoiceMode, button: Button, modeTitle: String) {
-        if (isRecording) {
-            val wasSameMode = (currentVoiceMode == mode)
-            stopRecordingAndExecute()
-            if (wasSameMode) return
+    private fun styleButton(btn: Button, bgColor: String, txtColor: String, strokeColor: String? = null) {
+        val gd = GradientDrawable().apply {
+            cornerRadius = dpToPx(6).toFloat()
+            setColor(Color.parseColor(bgColor))
+            if (strokeColor != null) {
+                setStroke(dpToPx(1), Color.parseColor(strokeColor))
+            }
         }
-
-        currentVoiceMode = mode
-        resetVoiceButtonTexts()
-        button.text = "⏹️ إنهاء"
-
-        tvStatus.text = "🔴 [مود $modeTitle] تحدث الآن.. اضغط الزر مجدداً للإنهاء"
-        startAudioCapture()
+        btn.background = gd
+        btn.setTextColor(Color.parseColor(txtColor))
     }
 
-    private fun resetVoiceButtonTexts() {
-        btnMicRefine.text = "🎤✨ صياغة"
-        btnMicTr.text = "🎤🇹🇷 تركي"
-        btnMicEn.text = "🎤🇬🇧 EN"
+    private fun updateTopControlsUI() {
+        // تلوين أزرار المود الرئيسي لتكون واضحة تماماً
+        if (currentMainMode == MainMode.REFINE) {
+            styleButton(btnModeRefine, "#A6E3A1", "#11111B", "#FFFFFF") // أخضر ساطع للمود الفعال
+            styleButton(btnModeTranslate, "#24253A", "#9399B2") // خافت لغير الفعال
+        } else {
+            styleButton(btnModeRefine, "#24253A", "#9399B2")
+            styleButton(btnModeTranslate, "#89B4FA", "#11111B", "#FFFFFF") // أزرق ساطع لمود الترجمة
+        }
+
+        if (isRecording) {
+            styleButton(btnMicAction, "#F38BA8", "#11111B", "#FFFFFF")
+            btnMicAction.text = "⏹️ إنهاء"
+        } else {
+            styleButton(btnMicAction, "#F38BA8", "#11111B")
+            btnMicAction.text = "🎤 تحدث"
+        }
+
+        styleButton(btnApplyText, "#CBA6F7", "#11111B")
+        styleButton(btnSwitchKeyboard, "#313244", "#FFFFFF")
+
+        // تحديث شريط الحالة العلوي
+        if (!isRecording) {
+            if (currentMainMode == MainMode.REFINE) {
+                tvStatus.text = "🟢 المود: تحسين الصياغة (نفس اللغة) | النمط: ${currentTone.label}"
+            } else {
+                tvStatus.text = "🔵 المود: ترجمة فورية (${currentTargetLang.label}) | النمط: ${currentTone.label}"
+            }
+        }
+
+        // بناء شريط الخيارات الفرعية حسب المود الفعال
+        subOptionsContainer.removeAllViews()
+
+        if (currentMainMode == MainMode.REFINE) {
+            // عرض أزرار اختيار النمط (رسمي / نصف رسمي / ألطف / مختصر)
+            for (tone in ToneStyle.values()) {
+                val isSelected = (currentTone == tone)
+                val btn = Button(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
+                        setMargins(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
+                    }
+                    text = tone.label
+                    textSize = 10f
+                    isAllCaps = false
+                    setPadding(0, 0, 0, 0)
+                    styleButton(
+                        this,
+                        if (isSelected) "#45475A" else "#1E1E2E",
+                        if (isSelected) "#A6E3A1" else "#A6ADC8",
+                        if (isSelected) "#A6E3A1" else null
+                    )
+                    setOnClickListener {
+                        currentTone = tone
+                        updateTopControlsUI()
+                    }
+                }
+                subOptionsContainer.addView(btn)
+            }
+        } else {
+            // في مود الترجمة: عرض اللغات الثلاث + زر تبديل النمط
+            for (lang in TargetLang.values()) {
+                val isSelected = (currentTargetLang == lang)
+                val btn = Button(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
+                        setMargins(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
+                    }
+                    text = lang.label
+                    textSize = 10.5f
+                    isAllCaps = false
+                    setPadding(0, 0, 0, 0)
+                    styleButton(
+                        this,
+                        if (isSelected) "#313244" else "#1E1E2E",
+                        if (isSelected) "#89B4FA" else "#A6ADC8",
+                        if (isSelected) "#89B4FA" else null
+                    )
+                    setOnClickListener {
+                        currentTargetLang = lang
+                        updateTopControlsUI()
+                    }
+                }
+                subOptionsContainer.addView(btn)
+            }
+
+            // زر تبديل النمط داخل مود الترجمة
+            val toneCycleBtn = Button(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.1f).apply {
+                    setMargins(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
+                }
+                text = currentTone.label
+                textSize = 10f
+                isAllCaps = false
+                setPadding(0, 0, 0, 0)
+                styleButton(this, "#24253A", "#F9E2AF", "#F9E2AF")
+                setOnClickListener {
+                    val tones = ToneStyle.values()
+                    currentTone = tones[(currentTone.ordinal + 1) % tones.size]
+                    updateTopControlsUI()
+                }
+            }
+            subOptionsContainer.addView(toneCycleBtn)
+        }
     }
 
     private fun startAudioCapture() {
@@ -134,49 +264,82 @@ class AIKeyboardService : InputMethodService() {
                 start()
             }
             isRecording = true
+            updateTopControlsUI()
+            if (currentMainMode == MainMode.REFINE) {
+                tvStatus.text = "🔴 تحدث بأي لغة.. سأحسّن الصياغة بنفس لغتك (${currentTone.label})"
+            } else {
+                tvStatus.text = "🔴 تحدث بأي لغة.. سأترجم كلامك ${currentTargetLang.label} (${currentTone.label})"
+            }
         } catch (e: Exception) {
             isRecording = false
-            resetVoiceButtonTexts()
-            tvStatus.text = "❌ تأكد من منح إذن المايكروفون للتطبيق"
+            updateTopControlsUI()
+            tvStatus.text = "❌ تأكد من تفعيل إذن المايكروفون للتطبيق"
         }
     }
 
-    private fun stopRecordingAndExecute() {
+    private fun cancelRecording() {
+        try {
+            mediaRecorder?.stop()
+            mediaRecorder?.release()
+        } catch (e: Exception) {}
+        mediaRecorder = null
+        isRecording = false
+        updateTopControlsUI()
+    }
+
+    private fun stopRecordingAndProcess() {
         if (!isRecording) return
         try {
             mediaRecorder?.stop()
             mediaRecorder?.release()
-            mediaRecorder = null
-        } catch (e: Exception) { }
-
+        } catch (e: Exception) {}
+        mediaRecorder = null
         isRecording = false
-        val executedMode = currentVoiceMode
-        currentVoiceMode = VoiceMode.NONE
-        resetVoiceButtonTexts()
+        updateTopControlsUI()
 
-        val bytes = audioFile?.readBytes() ?: run {
-            tvStatus.text = "⚠️ لم يتم التقاط صوت كافٍ"
+        val bytes = audioFile?.readBytes()
+        if (bytes == null || bytes.isEmpty()) {
+            tvStatus.text = "⚠️ لم يتم التقاط صوت، حاول مجدداً"
             return
         }
         val base64Audio = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
-        when (executedMode) {
-            VoiceMode.REFINE_ONLY -> {
-                tvStatus.text = "⏳ [مود الصياغة] جاري تحويل صوتك لنص رسمي بنفس اللغة..."
-                val prompt = "استمع لهذا التسجيل الصوتي واكتب محتواه بدقة، وصغه بأسلوب رسمي، فصيح، وجميل مع الحفاظ التام على نفس لغة المتحدث الأصلية دون ترجمتها إلى لغة أخرى. أرجع النص النهائي المصاغ فقط."
-                callGeminiAudio(prompt, base64Audio)
-            }
-            VoiceMode.TRANSLATE_TR -> {
-                tvStatus.text = "⏳ [مود الترجمة التركية] جاري تحويل صوتك وترجمته إلى Türkçe..."
-                val prompt = "استمع للتسجيل الصوتي بأي لغة كانت، وترجم المعنى إلى اللغة التركية (Türkçe) بأسلوب رسمي واحترافي وسليم تماماً. أرجع النص المترجم فقط."
-                callGeminiAudio(prompt, base64Audio)
-            }
-            VoiceMode.TRANSLATE_EN -> {
-                tvStatus.text = "⏳ [مود الترجمة الإنكليزية] جاري تحويل صوتك وترجمته إلى English..."
-                val prompt = "استمع للتسجيل الصوتي بأي لغة كانت، وترجم المعنى إلى اللغة الإنكليزية (English) بأسلوب رسمي واحترافي. أرجع النص المترجم فقط."
-                callGeminiAudio(prompt, base64Audio)
-            }
-            VoiceMode.NONE -> {}
+        if (currentMainMode == MainMode.REFINE) {
+            tvStatus.text = "⏳ جاري تحسين صياغة كلامك بنفس لغته (${currentTone.label})..."
+            val prompt = """
+                استمع إلى هذا التسجيل الصوتي وتعرف على لغته تلقائياً.
+                المطلوب: إعادة صياغة الكلام المنطوق وتصحيحه ليكون ${currentTone.promptDesc}، مع الحفاظ الصارم على نفس لغة المتحدث الأصلية (إذا تحدث بالتركية أخرج النص بالتركية، وإذا تحدث بالعربية أخرجه بالعربية، وإذا تحدث بالإنكليزية أخرجه بالإنكليزية).
+                أرجع النص النهائي المصاغ فقط بدون أي مقدمات أو علامات تنصيص أو شرح.
+            """.trimIndent()
+            callGeminiAudio(prompt, base64Audio)
+        } else {
+            tvStatus.text = "⏳ جاري ترجمة صوتك ${currentTargetLang.label} (${currentTone.label})..."
+            val prompt = """
+                استمع إلى هذا التسجيل الصوتي وتعرف على لغته تلقائياً مهما كانت.
+                المطلوب: ترجمة معنى الكلام وصياغته إلى اللغة ${currentTargetLang.langName} ${currentTone.promptDesc}.
+                أرجع النص المترجم النهائي فقط بدون أي مقدمات أو علامات تنصيص أو شرح.
+            """.trimIndent()
+            callGeminiAudio(prompt, base64Audio)
+        }
+    }
+
+    private fun executeTextAction(inputText: String) {
+        if (currentMainMode == MainMode.REFINE) {
+            tvStatus.text = "⏳ جاري تحسين النص المكتوب بنفس لغته (${currentTone.label})..."
+            val prompt = """
+                تعرف على لغة النص التالي تلقائياً، وأعد صياغته وتصحيحه ليكون ${currentTone.promptDesc}، مع الحفاظ التام على نفس لغة النص الأصلية دون ترجمته.
+                أرجع النص المعدل فقط بدون أي شرح أو إضافات:
+                $inputText
+            """.trimIndent()
+            callGeminiText(prompt)
+        } else {
+            tvStatus.text = "⏳ جاري ترجمة النص ${currentTargetLang.label} (${currentTone.label})..."
+            val prompt = """
+                تعرف على لغة النص التالي تلقائياً، وترجمه إلى اللغة ${currentTargetLang.langName} ${currentTone.promptDesc}.
+                أرجع النص المترجم فقط بدون أي شرح أو إضافات:
+                $inputText
+            """.trimIndent()
+            callGeminiText(prompt)
         }
     }
 
@@ -192,18 +355,31 @@ class AIKeyboardService : InputMethodService() {
         keysContainer.removeAllViews()
 
         val rows: List<List<String>> = when (currentLayout) {
-            "AR" -> listOf(
-                listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
-                listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
-                listOf("ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "DEL"),
-                listOf("123", "🌐 TR", "SPACE", "،", "↵")
-            )
+            "AR" -> {
+                if (!isShifted) {
+                    // الحروف العربية الكاملة بما فيها (د) و (ذ) و (لا)
+                    listOf(
+                        listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", "د"),
+                        listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", "ذ"),
+                        listOf("⇧", "ئ", "ء", "ؤ", "ر", "لا", "ى", "ة", "و", "ز", "ظ", "DEL"),
+                        listOf("123", "🌐 TR", "-", "SPACE", "،", ".", "↵")
+                    )
+                } else {
+                    // الطبقة الثانية للعربية: الهمزات (أ إ آ) والتشكيل والرموز السريعة
+                    listOf(
+                        listOf("أ", "إ", "آ", "لأ", "لإ", "لآ", "َ", "ً", "ُ", "ٌ", "ِ", "ٍ"),
+                        listOf("ّ", "ْ", "ـ", "«", "»", "/", ":", "؛", "(", ")", "؟", "!"),
+                        listOf("⬆", "@", "#", "%", "&", "*", "+", "=", "_", "\"", "'", "DEL"),
+                        listOf("123", "🌐 TR", "-", "SPACE", "،", ".", "↵")
+                    )
+                }
+            }
             "TR" -> {
                 val trLocale = Locale("tr", "TR")
                 val r1 = listOf("q", "w", "e", "r", "t", "y", "u", "ı", "o", "p", "ğ", "ü")
                 val r2 = listOf("a", "s", "d", "f", "g", "h", "j", "k", "l", "ş", "i")
                 val r3 = listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "ö", "ç", "DEL")
-                val r4 = listOf("123", "🌐 EN", "SPACE", ".", "↵")
+                val r4 = listOf("123", "🌐 EN", "-", "SPACE", ",", ".", "↵")
 
                 if (isShifted) {
                     listOf(
@@ -220,7 +396,7 @@ class AIKeyboardService : InputMethodService() {
                 val r1 = listOf("q", "w", "e", "r", "t", "y", "u", "i", "o", "p")
                 val r2 = listOf("a", "s", "d", "f", "g", "h", "j", "k", "l")
                 val r3 = listOf("⇧", "z", "x", "c", "v", "b", "n", "m", "DEL")
-                val r4 = listOf("123", "🌐 AR", "SPACE", ".", "↵")
+                val r4 = listOf("123", "🌐 AR", "-", "SPACE", ",", ".", "↵")
 
                 if (isShifted) {
                     listOf(
@@ -233,11 +409,11 @@ class AIKeyboardService : InputMethodService() {
                     listOf(r1, r2, r3, r4)
                 }
             }
-            else -> listOf( // "SYM"
+            else -> listOf( // "SYM" شامل لكل الكاركترات والداش والرموز
                 listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
-                listOf("@", "#", "$", "%", "&", "-", "+", "(", ")", "/"),
-                listOf("*", "\"", "'", ":", ";", "!", "?", "DEL"),
-                listOf("ABC", "🌐 AR", "SPACE", ".", "↵")
+                listOf("-", "_", "/", ":", ";", "(", ")", "$", "&", "@"),
+                listOf("+", "=", "*", "\"", "'", "!", "?", "؟", "%", "#", "DEL"),
+                listOf("ABC", "🌐 AR", "-", "SPACE", "،", ".", "↵")
             )
         }
 
@@ -253,10 +429,10 @@ class AIKeyboardService : InputMethodService() {
 
             for (key in row) {
                 val weight = when (key) {
-                    "SPACE" -> 4.0f
-                    "DEL", "↵" -> 1.5f
-                    "123", "ABC", "🌐 AR", "🌐 TR", "🌐 EN" -> 1.4f
-                    "⇧", "⬆" -> 1.2f
+                    "SPACE" -> 3.4f
+                    "DEL", "↵" -> 1.4f
+                    "123", "ABC", "🌐 AR", "🌐 TR", "🌐 EN" -> 1.3f
+                    "⇧", "⬆" -> 1.15f
                     else -> 1.0f
                 }
 
@@ -265,21 +441,25 @@ class AIKeyboardService : InputMethodService() {
                         setMargins(dpToPx(1), dpToPx(2), dpToPx(1), dpToPx(2))
                     }
                     text = when (key) {
-                        "SPACE" -> "مسافة"
+                        "SPACE" -> when (currentLayout) {
+                            "AR" -> "مسافة"
+                            "TR" -> "Boşluk"
+                            else -> "Space"
+                        }
                         "DEL" -> "⌫"
                         else -> key
                     }
                     textSize = when (key) {
                         "SPACE", "123", "ABC", "🌐 AR", "🌐 TR", "🌐 EN" -> 10.5f
                         "DEL", "↵", "⇧", "⬆" -> 13f
-                        else -> if (currentLayout == "TR") 13.5f else 15f
+                        else -> if (row.size >= 12) 13.5f else 15f
                     }
                     isAllCaps = false
                     setPadding(0, 0, 0, 0)
                     includeFontPadding = false
 
                     val bg = GradientDrawable().apply {
-                        cornerRadius = dpToPx(6).toFloat()
+                        cornerRadius = dpToPx(5).toFloat()
                         setColor(
                             when (key) {
                                 "SPACE" -> Color.parseColor("#313244")
@@ -294,6 +474,7 @@ class AIKeyboardService : InputMethodService() {
                         when (key) {
                             "↵" -> Color.parseColor("#A6E3A1")
                             "DEL" -> Color.parseColor("#F38BA8")
+                            "⇧", "⬆" -> Color.parseColor("#F9E2AF")
                             else -> Color.WHITE
                         }
                     )
@@ -310,7 +491,7 @@ class AIKeyboardService : InputMethodService() {
                             when (event.action) {
                                 MotionEvent.ACTION_DOWN -> {
                                     currentInputConnection?.deleteSurroundingText(1, 0)
-                                    deleteHandler.postDelayed(deleteRunnable, 350)
+                                    deleteHandler.postDelayed(deleteRunnable, 320)
                                     true
                                 }
                                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -336,24 +517,29 @@ class AIKeyboardService : InputMethodService() {
             "SPACE" -> ic.commitText(" ", 1)
             "↵" -> ic.commitText("\n", 1)
             "123" -> {
+                isShifted = false
                 currentLayout = "SYM"
                 renderKeyboardLayout()
             }
             "ABC" -> {
+                isShifted = false
                 currentLayout = lastAlphaLayout
                 renderKeyboardLayout()
             }
             "🌐 TR" -> {
+                isShifted = false
                 currentLayout = "TR"
                 lastAlphaLayout = "TR"
                 renderKeyboardLayout()
             }
             "🌐 EN" -> {
+                isShifted = false
                 currentLayout = "EN"
                 lastAlphaLayout = "EN"
                 renderKeyboardLayout()
             }
             "🌐 AR" -> {
+                isShifted = false
                 currentLayout = "AR"
                 lastAlphaLayout = "AR"
                 renderKeyboardLayout()
@@ -378,15 +564,15 @@ class AIKeyboardService : InputMethodService() {
 
     private fun getCurrentFieldText(): String {
         val ic = currentInputConnection ?: return ""
-        val before = ic.getTextBeforeCursor(2500, 0) ?: ""
-        val after = ic.getTextAfterCursor(2500, 0) ?: ""
+        val before = ic.getTextBeforeCursor(3000, 0) ?: ""
+        val after = ic.getTextAfterCursor(3000, 0) ?: ""
         return "$before$after"
     }
 
     private fun replaceAllText(newText: String) {
         val ic = currentInputConnection ?: return
-        val before = ic.getTextBeforeCursor(2500, 0) ?: ""
-        val after = ic.getTextAfterCursor(2500, 0) ?: ""
+        val before = ic.getTextBeforeCursor(3000, 0) ?: ""
+        val after = ic.getTextAfterCursor(3000, 0) ?: ""
         ic.deleteSurroundingText(before.length, after.length)
         ic.commitText(newText.trim(), 1)
     }
@@ -409,19 +595,20 @@ class AIKeyboardService : InputMethodService() {
     private fun sendGeminiRequest(parts: JSONArray) {
         val apiKey = getApiKey()
         if (apiKey.isBlank()) {
-            tvStatus.text = "⚠️ افتح تطبيق AI Keyboard وألصق مفتاح API أولاً!"
+            tvStatus.text = "⚠️ افتح تطبيق AI Keyboard واحفظ مفتاح API أولاً!"
             return
         }
 
         Thread {
             try {
+                // 1. تجربة النموذج المحفوظ إن وجد
                 if (workingModel != null) {
                     val (ok, _) = executeGenerateContent(workingModel!!, parts, apiKey)
                     if (ok) return@Thread
+                    workingModel = null
                 }
 
-                mainHandler.post { tvStatus.text = "⏳ جاري اختيار النموذج الأسرع لحسابك..." }
-
+                // 2. جلب النماذج الفعالة لحساب المستخدم من Google مباشرة
                 val modelsUrl = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
                 val getConn = modelsUrl.openConnection() as HttpURLConnection
                 getConn.requestMethod = "GET"
@@ -429,36 +616,37 @@ class AIKeyboardService : InputMethodService() {
                 getConn.connectTimeout = 10000
                 getConn.readTimeout = 10000
 
-                if (getConn.responseCode !in 200..299) {
-                    val err = getConn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                    val msg = try { JSONObject(err).getJSONObject("error").getString("message") } catch (e: Exception) { "خطأ في المفتاح: ${getConn.responseCode}" }
-                    mainHandler.post { tvStatus.text = "❌ $msg" }
-                    return@Thread
-                }
-
-                val resp = getConn.inputStream.bufferedReader().use { it.readText() }
-                val modelsArr = JSONObject(resp).optJSONArray("models")
-
                 val candidates = mutableListOf<String>()
-                if (modelsArr != null) {
-                    for (i in 0 until modelsArr.length()) {
-                        val m = modelsArr.getJSONObject(i)
-                        val mName = m.getString("name")
-                        val methods = m.optJSONArray("supportedGenerationMethods")
-                        var canGenerate = false
-                        if (methods != null) {
-                            for (j in 0 until methods.length()) {
-                                if (methods.getString(j) == "generateContent") {
-                                    canGenerate = true
-                                    break
+                if (getConn.responseCode in 200..299) {
+                    val resp = getConn.inputStream.bufferedReader().use { it.readText() }
+                    val modelsArr = JSONObject(resp).optJSONArray("models")
+                    if (modelsArr != null) {
+                        for (i in 0 until modelsArr.length()) {
+                            val m = modelsArr.getJSONObject(i)
+                            val mName = m.getString("name")
+                            val methods = m.optJSONArray("supportedGenerationMethods")
+                            var canGenerate = false
+                            if (methods != null) {
+                                for (j in 0 until methods.length()) {
+                                    if (methods.getString(j) == "generateContent") {
+                                        canGenerate = true
+                                        break
+                                    }
+                                }
+                            }
+                            if (canGenerate) {
+                                if (mName.contains("2.0-flash", ignoreCase = true)) {
+                                    candidates.add(0, mName)
+                                } else if (mName.contains("flash", ignoreCase = true)) {
+                                    candidates.add(mName)
+                                } else {
+                                    candidates.add(mName)
                                 }
                             }
                         }
-                        if (canGenerate) {
-                            if (mName.contains("flash", ignoreCase = true)) candidates.add(0, mName)
-                            else candidates.add(mName)
-                        }
                     }
+                } else {
+                    candidates.add("models/gemini-2.0-flash")
                 }
 
                 var success = false
@@ -492,7 +680,7 @@ class AIKeyboardService : InputMethodService() {
             val url = URL("https://generativelanguage.googleapis.com/v1beta/$cleanPath:generateContent?key=$apiKey")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("x-goog-api-key", apiKey)
             conn.connectTimeout = 12000
             conn.readTimeout = 25000
@@ -501,10 +689,10 @@ class AIKeyboardService : InputMethodService() {
             val content = JSONObject().put("parts", parts)
             val payload = JSONObject().put("contents", JSONArray().put(content))
 
-            conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
 
             val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-            val responseStr = stream.bufferedReader().use { it.readText() }
+            val responseStr = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
 
             if (conn.responseCode in 200..299) {
                 val jsonResponse = JSONObject(responseStr)
@@ -518,7 +706,8 @@ class AIKeyboardService : InputMethodService() {
 
                 mainHandler.post {
                     replaceAllText(resultText)
-                    tvStatus.text = "✅ تم التحديث بنجاح!"
+                    updateTopControlsUI()
+                    tvStatus.text = "✅ تم التنفيذ بنجاح! (${currentTone.label})"
                 }
                 Pair(true, "")
             } else {
