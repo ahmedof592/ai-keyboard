@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#1E1E2E"
+    android:padding="10dp">
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="جاهز.. تحدث أو صحح النص ✨"
+        android:textColor="#CDD6F4"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:paddingBottom="8dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:weightSum="4">
+
+        <Button
+            android:id="@+id/btnMic"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1.3"
+            android:backgroundTint="#F38BA8"
+            android:text="🎤 تحدث"
+            android:textColor="#11111B"
+            android:textStyle="bold"
+            android:layout_margin="2dp" />
+
+        <Button
+            android:id="@+id/btnVoiceAr"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="0.9"
+            android:backgroundTint="#313244"
+            android:text="🇸🇦 عربي"
+            android:textColor="#FFFFFF"
+            android:layout_margin="2dp" />
+
+        <Button
+            android:id="@+id/btnVoiceTr"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="0.9"
+            android:backgroundTint="#313244"
+            android:text="🇹🇷 تركي"
+            android:textColor="#FFFFFF"
+            android:layout_margin="2dp" />
+
+        <Button
+            android:id="@+id/btnVoiceEn"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="0.9"
+            android:backgroundTint="#313244"
+            android:text="🇬🇧 EN"
+            android:textColor="#FFFFFF"
+            android:layout_margin="2dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:weightSum="4"
+        android:layout_marginTop="4dp">
+
+        <Button
+            android:id="@+id/btnRewriteFormal"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="2"
+            android:backgroundTint="#A6E3A1"
+            android:text="✨ صياغة رسمية زابطة"
+            android:textColor="#11111B"
+            android:textStyle="bold"
+            android:layout_margin="2dp" />
+
+        <Button
+            android:id="@+id/btnSwitchKeyboard"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1.2"
+            android:backgroundTint="#89B4FA"
+            android:text="⌨️ الكيبورد"
+            android:textColor="#11111B"
+            android:layout_margin="2dp" />
+
+        <Button
+            android:id="@+id/btnClear"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="0.8"
+            android:backgroundTint="#45475A"
+            android:text="⌫ مسح"
+            android:textColor="#FFFFFF"
+            android:layout_margin="2dp" />
+    </LinearLayout>
+</LinearLayout>
