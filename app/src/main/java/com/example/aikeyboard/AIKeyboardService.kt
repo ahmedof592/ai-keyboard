@@ -10,6 +10,7 @@ import android.os.Looper
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -31,10 +32,12 @@ class AIKeyboardService : InputMethodService() {
     private lateinit var btnMic: Button
     private lateinit var keysContainer: LinearLayout
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val deleteHandler = Handler(Looper.getMainLooper())
 
     private var currentLayout = "AR" // "AR", "TR", "EN", "SYM"
     private var lastAlphaLayout = "AR"
     private var isShifted = false
+    private var workingModel: String? = null
 
     private fun getApiKey(): String {
         val prefs = getSharedPreferences("ai_kb_prefs", Context.MODE_PRIVATE)
@@ -91,7 +94,8 @@ class AIKeyboardService : InputMethodService() {
             "AR" -> listOf(
                 listOf("ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج"),
                 listOf("ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط"),
-                listOf("DEL", "ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ"),
+                // زر المسح في أقصى اليمين مثل الإنكليزي والتركي
+                listOf("ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "DEL"),
                 listOf("123", "🌐 TR", "SPACE", "،", "↵")
             )
             "TR" -> {
@@ -194,7 +198,32 @@ class AIKeyboardService : InputMethodService() {
                         }
                     )
 
-                    setOnClickListener { handleKeyPress(key) }
+                    // دعم الحذف المستمر السريع عند الضغط المطول
+                    if (key == "DEL") {
+                        val deleteRunnable = object : Runnable {
+                            override fun run() {
+                                currentInputConnection?.deleteSurroundingText(1, 0)
+                                deleteHandler.postDelayed(this, 40)
+                            }
+                        }
+
+                        setOnTouchListener { _, event ->
+                            when (event.action) {
+                                MotionEvent.ACTION_DOWN -> {
+                                    currentInputConnection?.deleteSurroundingText(1, 0)
+                                    deleteHandler.postDelayed(deleteRunnable, 350)
+                                    true
+                                }
+                                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                    deleteHandler.removeCallbacks(deleteRunnable)
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                    } else {
+                        setOnClickListener { handleKeyPress(key) }
+                    }
                 }
                 rowLayout.addView(btn)
             }
@@ -205,9 +234,6 @@ class AIKeyboardService : InputMethodService() {
     private fun handleKeyPress(key: String) {
         val ic = currentInputConnection ?: return
         when (key) {
-            "DEL" -> {
-                ic.deleteSurroundingText(1, 0)
-            }
             "SPACE" -> {
                 ic.commitText(" ", 1)
             }
@@ -347,48 +373,71 @@ class AIKeyboardService : InputMethodService() {
             tvStatus.text = "⚠️ افتح تطبيق AI Keyboard وألصق مفتاح API أولاً!"
             return
         }
+
         Thread {
             try {
-                // إرسال الطلب مع المفتاح في الرابط وفي الترويسة معاً لضمان القبول الكامل
-                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("x-goog-api-key", apiKey)
-                conn.connectTimeout = 15000
-                conn.readTimeout = 25000
-                conn.doOutput = true
-
-                val content = JSONObject().put("parts", parts)
-                val payload = JSONObject().put("contents", JSONArray().put(content))
-
-                conn.outputStream.use { it.write(payload.toString().toByteArray()) }
-
-                val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-                val responseStr = stream.bufferedReader().use { it.readText() }
-
-                if (conn.responseCode in 200..299) {
-                    val jsonResponse = JSONObject(responseStr)
-                    val resultText = jsonResponse
-                        .getJSONArray("candidates")
-                        .getJSONObject(0)
-                        .getJSONObject("content")
-                        .getJSONArray("parts")
-                        .getJSONObject(0)
-                        .getString("text")
-
-                    mainHandler.post {
-                        replaceAllText(resultText)
-                        tvStatus.text = "✅ تم التحديث بنجاح!"
-                    }
+                // قائمة النماذج المعتمدة بالترتيب للتجربة التلقائية
+                val modelsToTry = if (workingModel != null) {
+                    listOf(workingModel!!)
                 } else {
-                    val errorDetail = try {
-                        JSONObject(responseStr).getJSONObject("error").getString("message")
+                    listOf("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b")
+                }
+
+                var success = false
+                var lastErrorMessage = ""
+
+                for (model in modelsToTry) {
+                    try {
+                        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey")
+                        val conn = url.openConnection() as HttpURLConnection
+                        conn.requestMethod = "POST"
+                        conn.setRequestProperty("Content-Type", "application/json")
+                        conn.setRequestProperty("x-goog-api-key", apiKey)
+                        conn.connectTimeout = 12000
+                        conn.readTimeout = 25000
+                        conn.doOutput = true
+
+                        val content = JSONObject().put("parts", parts)
+                        val payload = JSONObject().put("contents", JSONArray().put(content))
+
+                        conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+
+                        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+                        val responseStr = stream.bufferedReader().use { it.readText() }
+
+                        if (conn.responseCode in 200..299) {
+                            val jsonResponse = JSONObject(responseStr)
+                            val resultText = jsonResponse
+                                .getJSONArray("candidates")
+                                .getJSONObject(0)
+                                .getJSONObject("content")
+                                .getJSONArray("parts")
+                                .getJSONObject(0)
+                                .getString("text")
+
+                            workingModel = model
+                            success = true
+
+                            mainHandler.post {
+                                replaceAllText(resultText)
+                                tvStatus.text = "✅ تم التحديث بنجاح!"
+                            }
+                            break
+                        } else {
+                            lastErrorMessage = try {
+                                JSONObject(responseStr).getJSONObject("error").getString("message")
+                            } catch (e: Exception) {
+                                "كود ${conn.responseCode}"
+                            }
+                        }
                     } catch (e: Exception) {
-                        "كود ${conn.responseCode}"
+                        lastErrorMessage = e.message ?: "خطأ في الاتصال"
                     }
+                }
+
+                if (!success) {
                     mainHandler.post {
-                        tvStatus.text = "❌ $errorDetail"
+                        tvStatus.text = "❌ $lastErrorMessage"
                     }
                 }
             } catch (e: Exception) {
