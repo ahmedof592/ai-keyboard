@@ -27,7 +27,7 @@ class AIKeyboardService : InputMethodService() {
 
     private fun getApiKey(): String {
         val prefs = getSharedPreferences("ai_kb_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("api_key", "") ?: ""
+        return prefs.getString("api_key", "")?.trim() ?: ""
     }
 
     override fun onCreateInputView(): View {
@@ -161,10 +161,12 @@ class AIKeyboardService : InputMethodService() {
         }
         Thread {
             try {
-                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey")
+                // إرسال الطلب مع تمرير المفتاح داخل ترويسة x-goog-api-key لدعم مفاتيح AQ الجديدة
+                val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("x-goog-api-key", apiKey)
                 conn.doOutput = true
 
                 val content = JSONObject().put("parts", parts)
@@ -172,23 +174,31 @@ class AIKeyboardService : InputMethodService() {
 
                 conn.outputStream.use { it.write(payload.toString().toByteArray()) }
 
-                val responseStr = conn.inputStream.bufferedReader().use { it.readText() }
-                val jsonResponse = JSONObject(responseStr)
-                val resultText = jsonResponse
-                    .getJSONArray("candidates")
-                    .getJSONObject(0)
-                    .getJSONObject("content")
-                    .getJSONArray("parts")
-                    .getJSONObject(0)
-                    .getString("text")
+                val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+                val responseStr = stream.bufferedReader().use { it.readText() }
 
-                mainHandler.post {
-                    replaceAllText(resultText)
-                    tvStatus.text = "✅ تم التحديث بنجاح!"
+                if (conn.responseCode in 200..299) {
+                    val jsonResponse = JSONObject(responseStr)
+                    val resultText = jsonResponse
+                        .getJSONArray("candidates")
+                        .getJSONObject(0)
+                        .getJSONObject("content")
+                        .getJSONArray("parts")
+                        .getJSONObject(0)
+                        .getString("text")
+
+                    mainHandler.post {
+                        replaceAllText(resultText)
+                        tvStatus.text = "✅ تم التحديث بنجاح!"
+                    }
+                } else {
+                    mainHandler.post {
+                        tvStatus.text = "❌ خطأ من الخادم (${conn.responseCode})"
+                    }
                 }
             } catch (e: Exception) {
                 mainHandler.post {
-                    tvStatus.text = "❌ خطأ في الاتصال: تأكد من الإنترنت ومفتاح API"
+                    tvStatus.text = "❌ خطأ في الاتصال بالإنترنت"
                 }
             }
         }.start()
