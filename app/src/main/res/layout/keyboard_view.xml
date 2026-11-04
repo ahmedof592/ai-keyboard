@@ -9,33 +9,36 @@
     android:paddingTop="3dp"
     android:paddingBottom="4dp">
 
-    <!-- شريط الحالة المصغر -->
+    <!-- شريط الحالة العريض لتوضيح المود بوضوح تام -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="جاهز.. اكتب أو تحدث ✨"
+        android:text="جاهز.. اختر المود للتحدث أو اكتب بالحروف ✨"
         android:textColor="#BAC2DE"
-        android:textSize="11sp"
+        android:textSize="11.5sp"
+        android:textStyle="bold"
         android:gravity="center"
-        android:paddingBottom="2dp"
+        android:paddingTop="1dp"
+        android:paddingBottom="3dp"
         android:singleLine="true" />
 
-    <!-- شريط الذكاء الاصطناعي فائق النحافة -->
+    <!-- شريط الأوضاع المستقلة (ارتفاع مدمج 34dp) -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="33dp"
+        android:layout_height="34dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingBottom="2dp">
 
+        <!-- مود الصياغة الصوتية (نفس اللغة) -->
         <Button
-            android:id="@+id/btnMic"
+            android:id="@+id/btnMicRefine"
             android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="1.2"
+            android:layout_height="33dp"
+            android:layout_weight="1.3"
             android:backgroundTint="#F38BA8"
-            android:text="🎤 تحدث"
+            android:text="🎤✨ صياغة"
             android:textColor="#11111B"
             android:textSize="11sp"
             android:textStyle="bold"
@@ -44,55 +47,44 @@
             android:padding="0dp"
             android:layout_margin="1dp" />
 
+        <!-- مود الترجمة الصوتية إلى التركية -->
         <Button
-            android:id="@+id/btnVoiceAr"
+            android:id="@+id/btnMicTr"
             android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="0.7"
+            android:layout_height="33dp"
+            android:layout_weight="1.1"
             android:backgroundTint="#313244"
-            android:text="🇸🇦"
+            android:text="🎤🇹🇷 تركي"
             android:textColor="#FFFFFF"
-            android:textSize="11sp"
+            android:textSize="10.5sp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
             android:padding="0dp"
             android:layout_margin="1dp" />
 
+        <!-- مود الترجمة الصوتية إلى الإنكليزية -->
         <Button
-            android:id="@+id/btnVoiceTr"
+            android:id="@+id/btnMicEn"
             android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="0.7"
+            android:layout_height="33dp"
+            android:layout_weight="1.1"
             android:backgroundTint="#313244"
-            android:text="🇹🇷"
+            android:text="🎤🇬🇧 EN"
             android:textColor="#FFFFFF"
-            android:textSize="11sp"
+            android:textSize="10.5sp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
             android:padding="0dp"
             android:layout_margin="1dp" />
 
+        <!-- مود صياغة وتصحيح النص المكتوب بالحروف -->
         <Button
-            android:id="@+id/btnVoiceEn"
+            android:id="@+id/btnRewriteText"
             android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="0.7"
-            android:backgroundTint="#313244"
-            android:text="🇬🇧"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:padding="0dp"
-            android:layout_margin="1dp" />
-
-        <Button
-            android:id="@+id/btnRewriteFormal"
-            android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="1.6"
+            android:layout_height="33dp"
+            android:layout_weight="1.2"
             android:backgroundTint="#A6E3A1"
-            android:text="✨ صياغة رسمية"
+            android:text="📝 تحسين"
             android:textColor="#11111B"
             android:textSize="11sp"
             android:textStyle="bold"
@@ -101,11 +93,12 @@
             android:padding="0dp"
             android:layout_margin="1dp" />
 
+        <!-- زر التبديل لكيبورد سامسونج -->
         <Button
             android:id="@+id/btnSwitchKeyboard"
             android:layout_width="0dp"
-            android:layout_height="32dp"
-            android:layout_weight="0.7"
+            android:layout_height="33dp"
+            android:layout_weight="0.6"
             android:backgroundTint="#89B4FA"
             android:text="⌨️"
             android:textColor="#11111B"
@@ -116,7 +109,7 @@
             android:layout_margin="1dp" />
     </LinearLayout>
 
-    <!-- مكان ظهور الحروف ومفاتيح الكتابة -->
+    <!-- حاوية أزرار الحروف الكاملة -->
     <LinearLayout
         android:id="@+id/keyboardKeysLayout"
         android:layout_width="match_parent"
